@@ -54,18 +54,58 @@ def filtrar_datos_para_mantener(df, columnas_a_mantener):
 
 # Función para validar números telefónicos
 def validar_telefonos(df):
+    """
+    Valida y limpia números telefónicos en las columnas pertinentes.
+    Detecta automáticamente columnas que contienen números de teléfono,
+    y elimina registros con números inválidos.
+    """
     for columna in df.columns:
-        if "teléfono" in columna.lower() or "mobile" in columna.lower():
-            print(f"Validando números en la columna '{columna}'...")
+        # Detectar si la columna contiene números telefónicos analizando una muestra
+        muestra = df[columna].astype(str).head(10).tolist()
+
+        def es_posible_telefono(valor):
+            """
+            Comprueba si un valor podría ser un número de teléfono basado en su longitud
+            y formato esperado (10 dígitos y un código de área válido).
+            """
+            valor = re.sub(r'\D', '', valor)  # Eliminar caracteres no numéricos
+            return len(valor) == 10 and valor[:3] in CODIGOS_AREA_VALIDOS
+
+        # Determinar si más de la mitad de la muestra podría ser números de teléfono
+        es_columna_telefonica = sum([es_posible_telefono(valor) for valor in muestra]) > (len(muestra) // 2)
+
+        if es_columna_telefonica:
+            print(f"Detectando y validando números telefónicos en la columna '{columna}'...")
+
+            # Convertir todos los valores a string
             df[columna] = df[columna].astype(str)
 
-            def es_valido(numero):
+            def limpiar_y_validar(numero):
+                """
+                Limpia y valida un número telefónico.
+                Retorna el número limpio si es válido, o None si no lo es.
+                """
                 numero = re.sub(r'\D', '', numero)  # Eliminar caracteres no numéricos
-                if len(numero) != 10 or numero[:3] not in CODIGOS_AREA_VALIDOS:
-                    return False
-                return True
+                if len(numero) != 10:  # Debe tener exactamente 10 dígitos
+                    return None
+                if numero[:3] not in CODIGOS_AREA_VALIDOS:  # Validar código de área
+                    return None
+                return numero  # Retornar el número limpio si es válido
 
-            df = df[df[columna].apply(es_valido)]
+            # Limpiar y validar la columna
+            df[f"{columna}_limpio"] = df[columna].apply(limpiar_y_validar)
+
+            # Mostrar estadísticas
+            total_validos = df[f"{columna}_limpio"].notna().sum()
+            total_invalidos = len(df) - total_validos
+            print(f" - Total válidos: {total_validos}")
+            print(f" - Total inválidos: {total_invalidos}")
+
+            # Filtrar registros válidos y reemplazar la columna original por los números limpios
+            df = df[df[f"{columna}_limpio"].notna()]
+            df[columna] = df[f"{columna}_limpio"]
+            df = df.drop(columns=[f"{columna}_limpio"])
+
     return df
 
 # Función para concatenar nombres y apellidos
