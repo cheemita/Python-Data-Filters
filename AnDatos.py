@@ -119,18 +119,17 @@ def concatenar_nombres_apellidos(df, col_nombre, col_apellido):
     df[col_apellido] = df[col_apellido].fillna("")
 
     # Crear la nueva columna 'Nombre Completo'
-    df["Nombre Completo"] = df[col_nombre].astype(str) + " " + df[col_apellido].astype(str)
+    df["name"] = df[col_nombre].astype(str) + " " + df[col_apellido].astype(str)
 
     # Eliminar registros donde ambas columnas sean vacías
     df = df[~((df[col_nombre] == "") & (df[col_apellido] == ""))]
 
     return df
 
-
 # Función para procesar nombres en una sola columna
 def procesar_nombre_completo(df, col_nombre_completo):
     try:
-        df["Nombre Completo"] = df[col_nombre_completo].astype(str)
+        df["name"] = df[col_nombre_completo].astype(str)
         df.drop(columns=[col_nombre_completo], inplace=True)
         return df
     except Exception as e:
@@ -151,8 +150,7 @@ def limpiar_archivo_excel(ruta_archivo):
     print("\n¿Desea procesar nombres y apellidos?")
     print("1. Concatenar dos columnas (nombre y apellido).")
     print("2. Usar una sola columna para el nombre completo.")
-    print("3. No realizar procesamiento de nombres.")
-    opcion = input("Seleccione una opción (1, 2, o 3): ").strip()
+    opcion = input("Seleccione una opción (1 o 2): ").strip()
 
     if opcion == '1':
         col_nombre = input("Ingrese el número de la columna para 'Nombre': ").strip()
@@ -167,18 +165,18 @@ def limpiar_archivo_excel(ruta_archivo):
             print("Error al seleccionar columnas para concatenar.")
 
     elif opcion == '2':
-        col_nombre_completo = input("Ingrese el número de la columna para 'Nombre Completo': ").strip()
+        col_nombre_completo = input("Ingrese el número de la columna para 'Name': ").strip()
         try:
             col_nombre_completo = encabezados[int(col_nombre_completo) - 1]
             df = procesar_nombre_completo(df, col_nombre_completo)
             encabezados = df.columns.tolist()  # Actualizar encabezados
-            print("\nColumna 'Nombre Completo' procesada y agregada.")
+            print("\nColumna 'name' procesada y agregada.")
         except (ValueError, IndexError):
             print("Error al seleccionar columna para nombre completo.")
 
     # Reorganizar la columna 'Nombre Completo' al inicio si existe
-    if 'Nombre Completo' in encabezados:
-        cols = ['Nombre Completo'] + [col for col in encabezados if col != 'Nombre Completo']
+    if 'name' in encabezados:
+        cols = ['name'] + [col for col in encabezados if col != 'name']
         df = df[cols]
         encabezados = df.columns.tolist()
 
@@ -212,6 +210,9 @@ def limpiar_archivo_excel(ruta_archivo):
     # Validar números telefónicos en las columnas pertinentes
     df = validar_telefonos(df)
 
+    # Reorganizar las columnas según el template
+    df = reorganizar_columnas_template(df)
+
     # Mostrar una vista previa de los datos limpios
     print("\nDatos después de la limpieza:")
     print(df.head())
@@ -228,6 +229,52 @@ def limpiar_archivo_excel(ruta_archivo):
                 print(f"Error al guardar el archivo: {e}")
         else:
             print("Por favor, proporciona un nombre de archivo con la extensión .xlsx")
+
+def reorganizar_columnas_template(df):
+    """
+    Reorganiza las columnas del DataFrame para que sigan el template:
+    1. Nombre Completo
+    2. Teléfono
+    3. Email
+
+    Si alguna columna está ausente, se agrega con valores predeterminados ("No hay <columna>").
+    Además, renombra las columnas detectadas para ajustarse al template.
+    """
+    # Detectar columnas existentes
+    nombre_col = [col for col in df.columns if "name" in col]
+    telefono_col = [col for col in df.columns if df[col].astype(str).str.match(r"^\d{10}$").any()]
+    email_col = [col for col in df.columns if df[col].astype(str).str.contains(r"@", na=False).any()]
+
+    # Configurar nombres de las columnas en el template
+    nombre_columna = "name"
+    telefono_columna = "phone"
+    email_columna = "email"
+
+    # Renombrar las columnas detectadas
+    if nombre_col:
+        df.rename(columns={nombre_col[0]: nombre_columna}, inplace=True)
+    else:
+        df[nombre_columna] = "No hay Nombre"
+
+    if telefono_col:
+        df.rename(columns={telefono_col[0]: telefono_columna}, inplace=True)
+    else:
+        df[telefono_columna] = "No hay Teléfono"
+
+    if email_col:
+        df.rename(columns={email_col[0]: email_columna}, inplace=True)
+    else:
+        df[email_columna] = "No hay Email"
+
+    # Crear el nuevo orden de columnas
+    columnas_ordenadas = [nombre_columna, telefono_columna, email_columna]
+
+    # Agregar las demás columnas
+    otras_columnas = [col for col in df.columns if col not in columnas_ordenadas]
+    columnas_ordenadas.extend(otras_columnas)
+
+    # Reorganizar el DataFrame
+    return df[columnas_ordenadas]
 
 # Llamar a la función principal
 if __name__ == "__main__":

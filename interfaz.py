@@ -1,8 +1,9 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog
+from tkinter import filedialog, messagebox
 import pandas as pd
 import re
 
+# Lista de códigos de área válidos (solo EE. UU. y Canadá)
 CODIGOS_AREA_VALIDOS = {
     "201", "202", "203", "204", "205", "206", "207", "208", "209", "210", "212", "213", "214", "215", "216", "217", "218", 
     "219", "224", "225", "226", "228", "229", "231", "234", "239", "240", "242", "246", "248", "250", "251", "252", "253",
@@ -30,175 +31,237 @@ CODIGOS_AREA_VALIDOS = {
     "984", "985", "986", "989"
 }
 
+# Función para leer el archivo Excel
+def leer_archivo_excel(ruta_archivo):
+    try:
+        df = pd.read_excel(ruta_archivo, header=None)  # Leer sin encabezados por defecto
+        encabezados = [f"Columna_{i + 1}" for i in range(df.shape[1])]  # Encabezados genéricos
+        df.columns = encabezados
+        return encabezados, df
+    except Exception as e:
+        print(f"Error al leer el archivo: {e}")
+        exit()
+
+# Función para validar números telefónicos
 def validar_telefonos(df):
+    """
+    Valida y limpia números telefónicos en las columnas pertinentes.
+    Detecta automáticamente columnas que contienen números de teléfono,
+    y elimina registros con números inválidos o filas donde no hay valores.
+    """
     for columna in df.columns:
+        # Detectar si la columna contiene números telefónicos analizando una muestra
         muestra = df[columna].astype(str).head(10).tolist()
 
         def es_posible_telefono(valor):
-            valor = re.sub(r'\D', '', valor)
+            """
+            Comprueba si un valor podría ser un número de teléfono basado en su longitud
+            y formato esperado (10 dígitos y un código de área válido).
+            """
+            valor = re.sub(r'\D', '', valor)  # Eliminar caracteres no numéricos
             return len(valor) == 10 and valor[:3] in CODIGOS_AREA_VALIDOS
 
+        # Determinar si más de la mitad de la muestra podría ser números de teléfono
         es_columna_telefonica = sum([es_posible_telefono(valor) for valor in muestra]) > (len(muestra) // 2)
 
         if es_columna_telefonica:
-            df[columna] = df[columna].astype(str).apply(lambda x: re.sub(r'\D', '', x) if len(re.sub(r'\D', '', x)) == 10 else None)
-            df = df[df[columna].notna()]
+            print(f"Detectando y validando números telefónicos en la columna '{columna}'...")
+            df[columna] = df[columna].astype(str)
+
+            def limpiar_y_validar(numero):
+                """
+                Limpia y valida un número telefónico.
+                Retorna el número limpio si es válido, o None si no lo es.
+                """
+                numero = re.sub(r'\D', '', numero)  # Eliminar caracteres no numéricos
+                if len(numero) != 10 or numero[:3] not in CODIGOS_AREA_VALIDOS:  # Validar formato y código de área
+                    return None
+                return numero  # Retornar el número limpio si es válido
+
+            # Limpiar y validar la columna
+            df[f"{columna}_limpio"] = df[columna].apply(limpiar_y_validar)
+
+            # Mostrar estadísticas
+            total_validos = df[f"{columna}_limpio"].notna().sum()
+            total_invalidos = len(df) - total_validos
+            print(f" - Total válidos: {total_validos}")
+            print(f" - Total inválidos: {total_invalidos}")
+
+            # Filtrar registros válidos
+            df = df[df[f"{columna}_limpio"].notna()]
+
+            # Reemplazar la columna original por los números limpios
+            df[columna] = df[f"{columna}_limpio"]
+            df = df.drop(columns=[f"{columna}_limpio"])
 
     return df
 
-def concatenar_nombres_apellidos(df, cols):
-    df["Nombre Completo"] = df[cols].astype(str).agg(' '.join, axis=1)
-    df = df.drop(columns=cols)
+# Función para concatenar nombres y apellidos
+def concatenar_nombres_apellidos(df, col_nombre, col_apellido):
+    df[col_nombre] = df[col_nombre].fillna("")  # Rellenar valores nulos
+    df[col_apellido] = df[col_apellido].fillna("")
+    df["name"] = df[col_nombre].astype(str) + " " + df[col_apellido].astype(str)
+    df = df[~((df[col_nombre] == "") & (df[col_apellido] == ""))]  # Eliminar filas donde ambos estén vacíos
     return df
 
+# Función para procesar nombre completo en una sola columna
 def procesar_nombre_completo(df, col_nombre_completo):
     try:
-        df["Nombre Completo"] = df[col_nombre_completo].astype(str)
-        df.drop(columns=[col_nombre_completo], inplace=True)
+        df["name"] = df[col_nombre_completo].astype(str)  # Usar la columna completa como 'name'
+        df.drop(columns=[col_nombre_completo], inplace=True)  # Eliminar la columna de nombre completo
         return df
     except Exception as e:
         print(f"Error al procesar el nombre completo: {e}")
         return df
 
-def detectar_columnas_nombres(df):
-    # Detectamos columnas posibles para nombres y apellidos
-    posibles_columnas = []
-    for col in df.columns:
-        muestra = df[col].astype(str).head(10).tolist()
-        if all(re.match(r'^[A-Za-záéíóúÁÉÍÓÚñÑ ]+$', str(valor)) and len(str(valor).split()) == 1 for valor in muestra if pd.notna(valor)):
-            posibles_columnas.append(col)
-    return posibles_columnas
 
+# Función para filtrar las columnas seleccionadas por el usuario
+def filtrar_datos_para_mantener(df, columnas_a_mantener):
+    return df[columnas_a_mantener]  # Solo mantener las columnas seleccionadas
 
-class ExcelCleanerApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Excel Cleaner")
+# Función para reorganizar las columnas según un formato predeterminado
+def reorganizar_columnas_template(df):
+    nombre_columna = "name"
+    telefono_columna = "phone"
+    email_columna = "email"
 
-        self.df = None
-        self.file_path = ""
+    # Buscar las columnas correspondientes a nombre, teléfono y email
+    nombre_col = [col for col in df.columns if "name" in col]
+    telefono_col = [col for col in df.columns if df[col].astype(str).str.match(r"^\d{10}$").any()]
+    email_col = [col for col in df.columns if df[col].astype(str).str.contains(r"@", na=False).any()]
 
-        self.setup_ui()
+    # Renombrar las columnas si se encuentran
+    if nombre_col:
+        df.rename(columns={nombre_col[0]: nombre_columna}, inplace=True)
+    else:
+        df[nombre_columna] = "No hay Nombre"
 
-    def setup_ui(self):
-        self.btn_select_file = tk.Button(self.root, text="Seleccionar Archivo", command=self.select_file)
-        self.btn_select_file.pack(pady=10)
+    if telefono_col:
+        df.rename(columns={telefono_col[0]: telefono_columna}, inplace=True)
+    else:
+        df[telefono_columna] = "No hay Teléfono"
 
-        self.columns_frame = tk.LabelFrame(self.root, text="Seleccione Columnas a Mantener")
-        self.columns_frame.pack(pady=10, fill="both", expand=True)
+    if email_col:
+        df.rename(columns={email_col[0]: email_columna}, inplace=True)
+    else:
+        df[email_columna] = "No hay Email"
 
-        self.columns_list = tk.Listbox(self.columns_frame, selectmode="multiple", width=50, height=10)
-        self.columns_list.pack(side="left", fill="both", expand=True)
+    # Reorganizar las columnas según el orden deseado
+    columnas_ordenadas = [nombre_columna, telefono_columna, email_columna]
+    otras_columnas = [col for col in df.columns if col not in columnas_ordenadas]
+    columnas_ordenadas.extend(otras_columnas)
 
-        self.scrollbar = tk.Scrollbar(self.columns_frame, orient="vertical", command=self.columns_list.yview)
-        self.scrollbar.pack(side="right", fill="y")
-        self.columns_list.config(yscrollcommand=self.scrollbar.set)
+    return df[columnas_ordenadas]
 
-        self.btn_save_file = tk.Button(self.root, text="Guardar Archivo", command=self.save_file)
-        self.btn_save_file.pack(pady=5)
+# Función principal para cargar y procesar el archivo Excel
+def procesar_archivo():
+    archivo = filedialog.askopenfilename(title="Seleccione un archivo Excel", filetypes=[("Archivos Excel", "*.xlsx")])
+    if not archivo:
+        return
 
-    def select_file(self):
-        self.file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")])
-        if not self.file_path:
-            return
+    try:
+        encabezados, df = leer_archivo_excel(archivo)
+        print("Archivo cargado con éxito.")
 
-        try:
-            self.df = pd.read_excel(self.file_path, header=None)
-            first_row = self.df.iloc[0].dropna().tolist()
-
-            if all(isinstance(item, str) for item in first_row):
-                self.df.columns = self.df.iloc[0]
-                self.df = self.df[1:]
+        def procesar_nombres():
+            opcion = var_opcion.get()
+            if opcion == 1:  # Concatenar nombres y apellidos
+                col_nombre = combo_nombre.get()
+                col_apellido = combo_apellido.get()
+                df_resultado = concatenar_nombres_apellidos(df, col_nombre, col_apellido)
+            elif opcion == 2:  # Usar columna de nombre completo
+                col_nombre_completo = combo_nombre_completo.get()
+                df_resultado = procesar_nombre_completo(df, col_nombre_completo)
             else:
-                self.df.columns = [f"Columna_{i+1}" for i in range(self.df.shape[1])]
+                messagebox.showerror("Error", "Seleccione una opción válida.")
+                return
 
-            self.process_data()
-            self.update_columns_list()
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo leer el archivo: {e}")
+            # Validar números telefónicos si el usuario lo solicita
+            if var_validar_telefonos.get():
+                df_resultado = validar_telefonos(df_resultado)
 
-    def preguntar_concatenar_nombres(self, posibles_columnas):
-        # Preguntamos si el usuario desea concatenar las columnas seleccionadas como 'Nombre Completo'
-        respuesta = messagebox.askyesno("Concatenar Nombres y Apellidos", "¿Deseas concatenar las siguientes columnas como 'Nombre Completo'?")
-        
-        if respuesta:
-            # Permitimos seleccionar las columnas que se desean concatenar
-            selected_cols = simpledialog.askstring("Seleccionar columnas", f"Selecciona las columnas a concatenar de las siguientes: {', '.join(posibles_columnas)}")
-            
-            if selected_cols:
-                # Convertimos la entrada en una lista de columnas seleccionadas
-                selected_cols = [col.strip() for col in selected_cols.split(',')]
-                
-                # Verificamos que todas las columnas seleccionadas estén en el dataframe
-                valid_cols = [col for col in selected_cols if col in posibles_columnas]
-                if len(valid_cols) == len(selected_cols):  # Aseguramos que todas las columnas sean válidas
-                    return valid_cols
-                else:
-                    messagebox.showerror("Error", "Algunas de las columnas seleccionadas no son válidas.")
-                    return None
-            else:
-                messagebox.showwarning("Advertencia", "No se ha ingresado ninguna columna. La operación se cancelará.")
-                return None
-        
-        return None
-    
-    def process_data(self):
-        try:
-            # Detectamos las columnas posibles para concatenar
-            posibles_columnas = detectar_columnas_nombres(self.df)
+            columnas_seleccionadas = [col for col in lista_columnas.curselection()]
+            columnas_a_mantener = [encabezados[idx] for idx in columnas_seleccionadas]
+            columnas_a_mantener.append("name")
 
-            # Preguntamos si el usuario desea concatenar y, si es así, qué columnas
-            selected_cols = self.preguntar_concatenar_nombres(posibles_columnas)
-            
-            if selected_cols:
-                # Concatenamos las columnas seleccionadas
-                self.df = concatenar_nombres_apellidos(self.df, selected_cols)
+            df_resultado = filtrar_datos_para_mantener(df_resultado, columnas_a_mantener)
+            df_resultado = reorganizar_columnas_template(df_resultado)
 
-            # Si ya hay una columna "Nombre Completo", procesamos ese caso
-            elif "Nombre Completo" in self.df.columns:
-                col_nombre_completo = "Nombre Completo"
-                self.df = procesar_nombre_completo(self.df, col_nombre_completo)
+            ruta_guardado = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Archivos Excel", "*.xlsx")])
+            if ruta_guardado:
+                df_resultado.to_excel(ruta_guardado, index=False)
+                messagebox.showinfo("Éxito", f"Archivo guardado en {ruta_guardado}")
 
-            # Aseguramos que "Nombre Completo" esté presente y sea la primera columna
-            if "Nombre Completo" in self.df.columns:
-                cols = ["Nombre Completo"] + [col for col in self.df.columns if col != "Nombre Completo"]
-                self.df = self.df[cols]
-            
-            # Validamos los números de teléfono
-            self.df = validar_telefonos(self.df)
+        # Crear ventana emergente
+        ventana = tk.Toplevel()
+        ventana.title("Procesar Archivo Excel")
 
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al procesar los datos: {e}")
+        tk.Label(ventana, text="Seleccione cómo procesar los nombres:").pack()
+        var_opcion = tk.IntVar()
 
-    def update_columns_list(self):
-        self.columns_list.delete(0, tk.END)
-        for col in self.df.columns:
-            self.columns_list.insert(tk.END, col)
+        # Opción para concatenar nombres y apellidos
+        radio_concatenar = tk.Radiobutton(ventana, text="Concatenar columnas de Nombre y Apellido", variable=var_opcion, value=1)
+        radio_concatenar.pack()
 
-    def save_file(self):
-        if self.df is None:
-            messagebox.showerror("Error", "No hay datos para guardar.")
-            return
+        # Opción para usar una columna de nombre completo
+        radio_completo = tk.Radiobutton(ventana, text="Usar una columna para el Nombre Completo", variable=var_opcion, value=2)
+        radio_completo.pack()
 
-        selected_indices = self.columns_list.curselection()
-        if not selected_indices:
-            messagebox.showerror("Error", "Debe seleccionar al menos una columna para guardar.")
-            return
+        # Variables para las columnas a seleccionar
+        combo_nombre = tk.StringVar(value=encabezados)
+        combo_apellido = tk.StringVar(value=encabezados)
+        combo_nombre_completo = tk.StringVar(value=encabezados)
 
-        selected_columns = [self.columns_list.get(i) for i in selected_indices]
-        self.df = self.df[selected_columns]
+        # Crear paneles para columnas de nombre y apellido, inicialmente ocultos
+        frame_columnas = tk.Frame(ventana)
+        tk.Label(frame_columnas, text="Seleccione las columnas para concatenar:").pack()
+        combo_nombre_menu = tk.OptionMenu(frame_columnas, combo_nombre, *encabezados)
+        combo_nombre_menu.pack()
+        combo_apellido_menu = tk.OptionMenu(frame_columnas, combo_apellido, *encabezados)
+        combo_apellido_menu.pack()
 
-        save_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
-        if not save_path:
-            return
+        frame_nombre_completo = tk.Frame(ventana)
+        tk.Label(frame_nombre_completo, text="Seleccione la columna de Nombre Completo:").pack()
+        combo_nombre_completo_menu = tk.OptionMenu(frame_nombre_completo, combo_nombre_completo, *encabezados)
+        combo_nombre_completo_menu.pack()
 
-        try:
-            self.df.to_excel(save_path, index=False)
-            messagebox.showinfo("Éxito", f"Archivo guardado en {save_path}")
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo guardar el archivo: {e}")
+        def actualizar_opciones():
+            if var_opcion.get() == 1:  # Concatenar columnas
+                frame_columnas.pack()  # Mostrar columnas de nombre y apellido
+                frame_nombre_completo.pack_forget()  # Ocultar nombre completo
+            elif var_opcion.get() == 2:  # Usar nombre completo
+                frame_columnas.pack_forget()  # Ocultar columnas de nombre y apellido
+                frame_nombre_completo.pack()  # Mostrar nombre completo
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = ExcelCleanerApp(root)
-    root.mainloop()
+        # Llamar a la función de actualización cada vez que se cambie la selección
+        radio_concatenar.config(command=actualizar_opciones)
+        radio_completo.config(command=actualizar_opciones)
+
+        # Llamar a la función inicial para actualizar las opciones
+        actualizar_opciones()
+
+        # Selección de columnas a mantener
+        tk.Label(ventana, text="Seleccione las columnas a mantener:").pack()
+        lista_columnas = tk.Listbox(ventana, selectmode=tk.MULTIPLE)
+        for col in encabezados:
+            lista_columnas.insert(tk.END, col)
+        lista_columnas.pack()
+
+        # Checkbox para validar números telefónicos
+        var_validar_telefonos = tk.IntVar()
+        tk.Checkbutton(ventana, text="Validar números telefónicos", variable=var_validar_telefonos).pack()
+
+        # Botón para procesar el archivo
+        tk.Button(ventana, text="Procesar y Guardar", command=procesar_nombres).pack()
+
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo procesar el archivo: {e}")
+
+# Interfaz principal
+root = tk.Tk()
+root.title("Limpieza Avanzada de Archivos Excel")
+
+btn_cargar = tk.Button(root, text="Cargar Archivo Excel", command=procesar_archivo)
+btn_cargar.pack(pady=20)
+
+root.mainloop()
